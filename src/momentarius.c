@@ -85,9 +85,6 @@ static int momentarius_init(void) {
         case CPUFAMILY_ARM_FIRESTORM_ICESTORM: /* A14 */ {
             momentarius.gfx.text_va = 0xFFFFFF8000000000;
             err = momentarius_init_A14();
-            if (err == MOMENTARIUS_A14_PROBE_ONLY) {
-                debug_log("A14 firmware probe succeeded; mutation is disabled in this research build\n");
-            }
         } break;
         default: break;
     }

