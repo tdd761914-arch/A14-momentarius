@@ -29,6 +29,8 @@ int32_t a64_branch_difference(uint64_t from, uint64_t to);
 uint32_t a64_gen_cond_branch(uint64_t from, uint64_t to, uint8_t cond);
 uint32_t a64_gen_branch(uint64_t from, uint64_t to);
 uint64_t gfx_phystokv(uint64_t pa);
+uint64_t gfx_a14_text_kva(void);
+uint64_t gfx_a14_page_pa(uint32_t fw_offset);
 int momentarius_build_ppl_write(void);
 void momentarius_tlb_flush(void);
 void gfx_suspend(void);

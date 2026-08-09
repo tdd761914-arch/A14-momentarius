@@ -1,11 +1,11 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "momentarius.h"
 #include "utils.h"
 
 #define A14_RTKTEXT_SCAN_SIZE 0x48000U
-#define A14_PAGE_SIZE         0x4000U
 #define A14_CAVE_START        0x0A80U
 #define A14_CAVE_END          0x1000U
 
@@ -20,30 +20,29 @@ static const uint8_t a14_bptp_tag[8] = {
     'B', 'P', 'T', 'P', 0x08, 0x00, 0x00, 0x00
 };
 
-static uint32_t a14_read32(uint64_t mapping, uint32_t offset) {
-    return *(volatile uint32_t *)(mapping + offset);
+static uint8_t a14_page_buf[A14_PAGE_SIZE];
+
+static uint32_t a14_read32(const uint8_t *page, uint32_t offset) {
+    uint32_t value = 0;
+    memcpy(&value, page + offset, sizeof(value));
+    return value;
 }
 
-static uint64_t a14_read64(uint64_t mapping, uint32_t offset) {
-    return *(volatile uint64_t *)(mapping + offset);
+static uint64_t a14_read64(const uint8_t *page, uint32_t offset) {
+    uint64_t value = 0;
+    memcpy(&value, page + offset, sizeof(value));
+    return value;
 }
 
-static bool a14_bytes_equal(uint64_t mapping, uint32_t offset,
+static bool a14_bytes_equal(const uint8_t *page, uint32_t offset,
                             const uint8_t *expected, size_t size) {
-    volatile const uint8_t *bytes = (volatile const uint8_t *)(mapping + offset);
-
-    for (size_t i = 0; i < size; i++) {
-        if (bytes[i] != expected[i]) return false;
-    }
-    return true;
+    return memcmp(page + offset, expected, size) == 0;
 }
 
-static bool a14_range_is_zero(uint64_t mapping, uint32_t start, uint32_t end) {
-    volatile const uint8_t *bytes = (volatile const uint8_t *)mapping;
-
+static bool a14_range_is_zero(const uint8_t *page, uint32_t start, uint32_t end) {
     if (start >= end || end > A14_PAGE_SIZE) return false;
     for (uint32_t i = start; i < end; i++) {
-        if (bytes[i] != 0) return false;
+        if (page[i] != 0) return false;
     }
     return true;
 }
@@ -62,7 +61,7 @@ static bool a14_decode_bl_target(uint32_t from, uint32_t instruction,
     return true;
 }
 
-static bool a14_validate_ttbr_decoder(uint64_t first_page, uint32_t offset) {
+static bool a14_validate_ttbr_decoder(const uint8_t *page, uint32_t offset) {
     static const uint32_t expected[] = {
         0xAA0003E2U, /* mov x2, x0 */
         0x52800103U, /* mov w3, #8 */
@@ -74,30 +73,30 @@ static bool a14_validate_ttbr_decoder(uint64_t first_page, uint32_t offset) {
 
     if (offset > A14_PAGE_SIZE - 0x20U) return false;
     for (uint32_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
-        if (a14_read32(first_page, offset + i * sizeof(uint32_t)) != expected[i]) {
+        if (a14_read32(page, offset + i * sizeof(uint32_t)) != expected[i]) {
             return false;
         }
     }
 
-    return a14_read32(first_page, offset + 0x1CU) == A64_RET;
+    return a14_read32(page, offset + 0x1CU) == A64_RET;
 }
 
-static int a14_find_resume_path(uint64_t first_page) {
+static int a14_find_resume_path(const uint8_t *page) {
     uint32_t ttbr1_msr = 0;
     uint32_t decoder = 0;
 
     for (uint32_t offset = sizeof(uint32_t);
          offset <= A14_PAGE_SIZE - sizeof(uint32_t);
          offset += sizeof(uint32_t)) {
-        if (a14_read32(first_page, offset) != A64_MSR_TTBR1_X0) continue;
+        if (a14_read32(page, offset) != A64_MSR_TTBR1_X0) continue;
 
         uint32_t candidate = 0;
         if (!a14_decode_bl_target(offset - sizeof(uint32_t),
-                                  a14_read32(first_page, offset - sizeof(uint32_t)),
+                                  a14_read32(page, offset - sizeof(uint32_t)),
                                   &candidate)) {
             continue;
         }
-        if (!a14_validate_ttbr_decoder(first_page, candidate)) continue;
+        if (!a14_validate_ttbr_decoder(page, candidate)) continue;
 
         if (ttbr1_msr != 0) return -1; /* Ambiguous firmware layout. */
         ttbr1_msr = offset;
@@ -113,7 +112,7 @@ static int a14_find_resume_path(uint64_t first_page) {
     for (uint32_t offset = ttbr1_msr + sizeof(uint32_t);
          offset < search_end;
          offset += sizeof(uint32_t)) {
-        if (a14_read32(first_page, offset) == A64_MRS_SCTLR_X0) {
+        if (a14_read32(page, offset) == A64_MRS_SCTLR_X0) {
             sctlr = offset;
             break;
         }
@@ -129,8 +128,8 @@ static int a14_find_resume_path(uint64_t first_page) {
     for (uint32_t offset = sctlr + sizeof(uint32_t);
          offset <= search_end;
          offset += sizeof(uint32_t)) {
-        if (a14_read32(first_page, offset) != A64_CMP_X1_ZERO) continue;
-        if ((a14_read32(first_page, offset + sizeof(uint32_t)) & A64_B_COND_MASK) !=
+        if (a14_read32(page, offset) != A64_CMP_X1_ZERO) continue;
+        if ((a14_read32(page, offset + sizeof(uint32_t)) & A64_B_COND_MASK) !=
             A64_B_COND_OPCODE) {
             continue;
         }
@@ -145,35 +144,43 @@ static int a14_find_resume_path(uint64_t first_page) {
     return 0;
 }
 
-static int a14_find_bptp(void) {
+static int a14_find_bptp(uint64_t text_kva) {
     uint32_t match = 0;
-    uint64_t match_mapping = 0;
+    uint32_t match_page = 0;
 
+    /* Scan only pages confirmed through the trusted kernel tables (text_kva).
+       A linear text_pa + page_offset scan faults on scattered AGX pages
+       (T8101: uncatchable LLC bus error). */
     for (uint32_t page_offset = 0;
          page_offset < A14_RTKTEXT_SCAN_SIZE;
          page_offset += A14_PAGE_SIZE) {
-        uint64_t mapping = map_phys_data(momentarius.gfx.text_pa + page_offset,
-                                         A14_PAGE_SIZE);
-        if (mapping == 0) return -1;
+        kreadbuf(text_kva + page_offset, a14_page_buf, A14_PAGE_SIZE);
 
         for (uint32_t offset = 0;
              offset <= A14_PAGE_SIZE - sizeof(a14_bptp_tag) - sizeof(uint64_t);
              offset++) {
-            if (!a14_bytes_equal(mapping, offset, a14_bptp_tag,
+            if (!a14_bytes_equal(a14_page_buf, offset, a14_bptp_tag,
                                  sizeof(a14_bptp_tag))) {
                 continue;
             }
             if (match != 0) return -1; /* Require one unique patchbay record. */
             match = page_offset + offset;
-            match_mapping = mapping;
+            match_page = page_offset;
         }
     }
 
-    if (match == 0 || match_mapping == 0) return -1;
+    if (match == 0) return -1;
 
+    if (gfx_a14_page_pa(match_page) == 0) {
+        debug_log("A14 fail-closed: BPTP page (text+0x%x) has no confirmed runtime mapping\n",
+                  match_page);
+        return -1;
+    }
+
+    kreadbuf(text_kva + match_page, a14_page_buf, A14_PAGE_SIZE);
     uint32_t value_offset = match + sizeof(a14_bptp_tag);
     uint32_t in_page = value_offset & (A14_PAGE_SIZE - 1U);
-    uint64_t ttbr_pa = a14_read64(match_mapping, in_page);
+    uint64_t ttbr_pa = a14_read64(a14_page_buf, in_page);
 
     if (ttbr_pa == 0 || (ttbr_pa & (A14_PAGE_SIZE - 1U)) != 0 ||
         !GFX_PA_VALID(ttbr_pa)) {
@@ -188,23 +195,25 @@ static int a14_find_bptp(void) {
 }
 
 int momentarius_init_A14(void) {
-    uint64_t first_page = map_phys_data(momentarius.gfx.text_pa, A14_PAGE_SIZE);
-    if (first_page == 0) return -1;
+    uint64_t text_kva = gfx_a14_text_kva();
+    if (text_kva == 0) return -1;
+
+    kreadbuf(text_kva, a14_page_buf, A14_PAGE_SIZE);
 
     momentarius.gfx.text_size = A14_RTKTEXT_SCAN_SIZE;
 
-    if (!a14_range_is_zero(first_page, A14_CAVE_START, A14_CAVE_END)) {
+    if (!a14_range_is_zero(a14_page_buf, A14_CAVE_START, A14_CAVE_END)) {
         debug_log("A14 executable-padding candidate is not empty\n");
         return -1;
     }
     momentarius.gfx.a14.code_cave_offset = A14_CAVE_START;
     momentarius.gfx.a14.code_cave_size = A14_CAVE_END - A14_CAVE_START;
 
-    if (a14_find_resume_path(first_page) != 0) {
+    if (a14_find_resume_path(a14_page_buf) != 0) {
         debug_log("A14 RTKit resume path did not match the expected semantics\n");
         return -1;
     }
-    if (a14_find_bptp() != 0) return -1;
+    if (a14_find_bptp(text_kva) != 0) return -1;
 
     momentarius.gfx.ttbr_kva = gfx_phystokv(momentarius.gfx.ttbr_pa);
     if (!KADDR_VALID(momentarius.gfx.ttbr_kva)) return -1;

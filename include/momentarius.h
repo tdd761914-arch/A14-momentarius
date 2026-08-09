@@ -33,6 +33,9 @@ int momentarius_init_A14(void);
 #define A64_B_COND_MASK         0xff000010
 #define A64_B_COND_OPCODE       0x54000000
 
+#define A14_PAGE_SIZE           0x4000U
+#define A14_FW_PAGE_MAP_COUNT   18U /* pages 0..0x17 cover the whole 0x48000 scan range */
+
 #define IO_MAP_DEFAULT_CACHE    0x0
 #define IO_MAP_INNER_WRITEBACK  0x500
 
@@ -68,6 +71,9 @@ typedef struct {
             uint32_t resume_hook_offset;
             uint32_t code_cave_offset;
             uint32_t code_cave_size;
+            uint64_t text_kva;
+            uint32_t page_count;
+            uint64_t page_map[A14_FW_PAGE_MAP_COUNT];
         } a14;
     } gfx;
     uint64_t self_proc_addr;

