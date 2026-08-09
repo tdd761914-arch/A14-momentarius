@@ -12,6 +12,17 @@
 
 int momentarius_init_A12(void);
 int momentarius_init_A13(void);
+int momentarius_init_A14(void);
+
+#ifndef CPUFAMILY_ARM_FIRESTORM_ICESTORM
+#define CPUFAMILY_ARM_FIRESTORM_ICESTORM 0x1b588bb3
+#endif
+
+/*
+ * A14 support is deliberately probe-only.  A successful probe means that the
+ * expected RTKit structures were found; it does not enable firmware writes.
+ */
+#define MOMENTARIUS_A14_PROBE_ONLY 1
 
 #if 1
 #define debug_log(...) {fprintf(stderr, "[momentarius] " __VA_ARGS__);usleep(1000);}
@@ -55,6 +66,15 @@ typedef struct {
         uint32_t *hook_data;
         uint32_t method;
         uint64_t target_l3_table;
+        struct {
+            uint32_t bptp_offset;
+            uint32_t bptp_value_offset;
+            uint32_t ttbr1_msr_offset;
+            uint32_t ttbr_decode_offset;
+            uint32_t resume_hook_offset;
+            uint32_t code_cave_offset;
+            uint32_t code_cave_size;
+        } a14_probe;
     } gfx;
     uint64_t self_proc_addr;
     uint64_t kern_vm_map;
