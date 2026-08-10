@@ -7,9 +7,9 @@
 #include "momentarius.h"
 
 extern uint64_t kread64(uint64_t where);
-extern void kwrite64(uint64_t where, uint64_t what);
-extern void kreadbuf(uint64_t where, void *buf, size_t size);
-extern void kwritebuf(uint64_t where, void *buf, size_t size);
+extern int kwrite64(uint64_t where, uint64_t what);
+extern int kreadbuf(uint64_t where, void *buf, size_t size);
+extern int kwritebuf(uint64_t where, const void *buf, size_t size);
 extern uint64_t kread_ptr(uint64_t where);
 
 extern momentarius_t momentarius;
