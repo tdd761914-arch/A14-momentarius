@@ -2,8 +2,15 @@
 #define momentarius_utils_h
 
 #include <stdint.h>
+#include <stddef.h>
 #include <mach/mach.h>
 #include "momentarius.h"
+
+extern uint64_t kread64(uint64_t where);
+extern void kwrite64(uint64_t where, uint64_t what);
+extern void kreadbuf(uint64_t where, void *buf, size_t size);
+extern void kwritebuf(uint64_t where, void *buf, size_t size);
+extern uint64_t kread_ptr(uint64_t where);
 
 extern momentarius_t momentarius;
 extern volatile bool stop_write;
